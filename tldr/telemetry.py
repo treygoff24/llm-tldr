@@ -68,11 +68,31 @@ def project_hash(project: Path) -> str:
     return hashlib.sha256(str(project).encode("utf-8")).hexdigest()[:8]
 
 
+def _path_key(project: Path, value: str) -> str:
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = project / path
+    try:
+        resolved = path.resolve()
+    except Exception:
+        resolved = path
+    try:
+        return str(resolved.relative_to(project)).replace("\\", "/")
+    except Exception:
+        return str(resolved).replace("\\", "/")
+
+
+def telemetry_path_hash(project: Path, value: str) -> str:
+    return hashlib.sha256(_path_key(project, value).encode("utf-8")).hexdigest()[:12]
+
+
 def _normalize_path(project: Path, value: str) -> str:
     if redact_paths_enabled():
-        return f"<redacted>/{project_hash(project)}"
+        return f"<redacted>/{project_hash(project)}/{telemetry_path_hash(project, value)}"
     try:
-        rel = Path(value).expanduser().resolve().relative_to(project)
+        rel = Path(_path_key(project, value))
+        if rel.is_absolute():
+            return rel.name
         return str(rel)
     except Exception:
         return Path(value).name

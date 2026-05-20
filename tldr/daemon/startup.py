@@ -122,6 +122,21 @@ def _write_pid_to_locked_file(pidfile: IO, pid: int) -> None:
     pidfile.flush()
 
 
+def _release_pidfile_lock(pidfile: IO) -> None:
+    """Release and close a PID file lock owned by the current process."""
+    if sys.platform == "win32":
+        try:
+            msvcrt.locking(pidfile.fileno(), msvcrt.LK_UNLCK, 1)
+        except Exception:
+            pass
+    else:
+        try:
+            fcntl.flock(pidfile.fileno(), fcntl.LOCK_UN)
+        except Exception:
+            pass
+    pidfile.close()
+
+
 def _is_socket_connectable(project: Path, timeout: float = 1.0) -> bool:
     """Check if daemon socket exists and accepts connections.
 
@@ -252,6 +267,15 @@ def start_daemon(project_path: str | Path, foreground: bool = False):
         print("Daemon already running")
         return
 
+    # A previous daemon version may not hold the PID-file lock reliably. Treat
+    # a live socket as authoritative before forking, otherwise repeated
+    # SessionStart hooks can spawn duplicate children that immediately collide
+    # on the socket.
+    if _is_socket_connectable(project, timeout=0.2):
+        _release_pidfile_lock(pidfile)
+        print("Daemon already running")
+        return
+
     # We have the lock - we're the only one starting a daemon
     # Ensure .tldrignore exists (create with defaults if not)
     created, message = ensure_tldrignore(project)
@@ -363,11 +387,11 @@ def start_daemon(project_path: str | Path, foreground: bool = False):
                 daemon.run()
                 sys.exit(0)  # Should not reach here
             else:
-                # Parent process - release lock and wait for daemon
-                try:
-                    fcntl.flock(pidfile.fileno(), fcntl.LOCK_UN)
-                except Exception:
-                    pass
+                # Parent process: close our inherited descriptor without
+                # explicitly unlocking. On Unix flock locks survive fork on the
+                # shared open-file description; calling LOCK_UN here releases
+                # the child's daemon lock too, which lets later hooks fork
+                # duplicate daemons.
                 pidfile.close()
 
                 # Wait for daemon to be ready (socket exists)

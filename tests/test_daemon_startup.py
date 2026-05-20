@@ -1,0 +1,76 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from tldr.daemon import startup
+
+
+class FakePidFile:
+    def __init__(self) -> None:
+        self.closed = False
+        self.value = ""
+
+    def fileno(self) -> int:
+        return 12345
+
+    def seek(self, *_args) -> None:
+        pass
+
+    def truncate(self) -> None:
+        self.value = ""
+
+    def write(self, value: str) -> None:
+        self.value += value
+
+    def flush(self) -> None:
+        pass
+
+    def read(self) -> str:
+        return self.value
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_start_daemon_uses_live_socket_as_duplicate_guard(monkeypatch, tmp_path, capsys):
+    pidfile = FakePidFile()
+    monkeypatch.setattr(startup, "_try_acquire_pidfile_lock", lambda _path: pidfile)
+    monkeypatch.setattr(startup, "_is_socket_connectable", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr("tldr.tldrignore.ensure_tldrignore", lambda _project: (False, ""))
+
+    def fail_if_constructed(_project: Path) -> None:
+        raise AssertionError("daemon should not be constructed when a live socket exists")
+
+    monkeypatch.setattr("tldr.daemon.core.TLDRDaemon", fail_if_constructed)
+
+    startup.start_daemon(tmp_path)
+
+    assert "Daemon already running" in capsys.readouterr().out
+    assert pidfile.closed
+
+
+def test_unix_parent_does_not_unlock_child_pidfile_after_fork(monkeypatch, tmp_path):
+    pidfile = FakePidFile()
+    socket_path = tmp_path / "daemon.sock"
+    socket_path.touch()
+    connectable = iter([False, True])
+    flock_calls = []
+
+    class FakeDaemon:
+        def __init__(self, project: Path) -> None:
+            self.project = project
+            self.socket_path = socket_path
+
+    monkeypatch.setattr(startup, "_try_acquire_pidfile_lock", lambda _path: pidfile)
+    monkeypatch.setattr(startup, "_is_socket_connectable", lambda *_args, **_kwargs: next(connectable))
+    monkeypatch.setattr(startup, "_get_socket_path", lambda _project: socket_path)
+    monkeypatch.setattr("tldr.tldrignore.ensure_tldrignore", lambda _project: (False, ""))
+    monkeypatch.setattr("tldr.daemon.core.TLDRDaemon", FakeDaemon)
+    monkeypatch.setattr(startup.os, "fork", lambda: 12345)
+    monkeypatch.setattr(startup.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(startup.fcntl, "flock", lambda _fd, op: flock_calls.append(op))
+
+    startup.start_daemon(tmp_path)
+
+    assert pidfile.closed
+    assert startup.fcntl.LOCK_UN not in flock_calls

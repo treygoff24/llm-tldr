@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from tldr.hooks.runner import run_hook
-from tldr.telemetry import record_hook_execution, write_telemetry_record
+from tldr.telemetry import record_hook_execution, telemetry_path_hash, write_telemetry_record
 
 
 def test_telemetry_disabled_by_default(monkeypatch, tmp_path):
@@ -59,6 +59,28 @@ def test_env_can_disable_global_telemetry_flag_file(monkeypatch, tmp_path):
     write_telemetry_record({"event": "test"})
 
     assert not (tmp_path / "telemetry.jsonl").exists()
+
+
+def test_redacted_file_paths_keep_distinct_stable_hashes(monkeypatch, tmp_path):
+    monkeypatch.setenv("TLDR_TELEMETRY", "1")
+    monkeypatch.setenv("TLDR_TELEMETRY_REDACT_PATHS", "1")
+    telemetry_path = tmp_path / "telemetry.jsonl"
+    monkeypatch.setenv("TLDR_TELEMETRY_PATH", str(telemetry_path))
+
+    record_hook_execution(
+        client="codex",
+        hook_event="pre-read",
+        project=tmp_path,
+        duration_ms=1,
+        status="ok",
+        trigger_files=["src/app.py", "src/auth.py"],
+    )
+
+    payload = json.loads(telemetry_path.read_text(encoding="utf-8").splitlines()[-1])
+    expected_app = f"<redacted>/{payload['project_hash']}/{telemetry_path_hash(tmp_path, 'src/app.py')}"
+    expected_auth = f"<redacted>/{payload['project_hash']}/{telemetry_path_hash(tmp_path, 'src/auth.py')}"
+    assert payload["trigger_files"] == [expected_app, expected_auth]
+    assert expected_app != expected_auth
 
 
 def test_unwritable_telemetry_path_is_swallowed(monkeypatch, tmp_path):
@@ -173,9 +195,15 @@ def test_cli_hook_emits_telemetry(monkeypatch, tmp_path):
     monkeypatch.setenv("TLDR_TELEMETRY", "1")
     telemetry_path = tmp_path / "telemetry.jsonl"
     monkeypatch.setenv("TLDR_TELEMETRY_PATH", str(telemetry_path))
-    payload = {"hook_event_name": "SessionStart", "cwd": str(tmp_path)}
+    (tmp_path / "README.md").write_text("# hello\n", encoding="utf-8")
+    payload = {
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Read",
+        "tool_input": {"file_path": "README.md"},
+        "cwd": str(tmp_path),
+    }
     result = subprocess.run(
-        [sys.executable, "-m", "tldr.cli", "hooks", "run", "session-start", "--client", "codex"],
+        [sys.executable, "-m", "tldr.cli", "hooks", "run", "pre-read", "--client", "codex"],
         input=json.dumps(payload),
         capture_output=True,
         text=True,

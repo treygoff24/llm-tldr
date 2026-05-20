@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.evaluate_tldr_usage import (
+from scripts.evaluate_tldr_usage import (  # noqa: E402
     TokenTotals,
     TelemetryRecord,
     apply_cumulative_token_count,
@@ -24,6 +24,8 @@ from scripts.evaluate_tldr_usage import (
     normalize_cwd,
     path_context_hit,
     project_hash,
+    telemetry_context_hit,
+    telemetry_path_hash,
     token_usage_is_cumulative,
     verdict_for,
 )
@@ -107,6 +109,34 @@ def test_parse_tool_arguments_accepts_codex_json_string_arguments():
 def test_path_context_hit_avoids_unsafe_substring_matches():
     assert not path_context_hit("app", {"wrapper/app.py"})
     assert path_context_hit("app.py", {"src/app.py"})
+
+
+def test_redacted_path_context_hit_matches_hashed_session_paths():
+    codex = parse_codex_file(FIXTURES / "codex_session.jsonl", cohort="treatment")
+    assert codex is not None
+    repo = normalize_cwd(codex.cwd)
+    repo_hash = project_hash(repo)
+    trigger = f"<redacted>/{repo_hash}/{telemetry_path_hash(repo, 'src/app.py')}"
+    record = TelemetryRecord(
+        timestamp=codex.start,
+        client="codex",
+        event="pre-read",
+        project=f"<redacted>/{repo_hash}",
+        project_hash=repo_hash,
+        duration_ms=1,
+        status="ok",
+        error_kind=None,
+        injected_bytes=0,
+        trigger_files=[trigger],
+        recommended_related_files=[],
+        surfaced_files=[],
+        diagnostics_count=0,
+        daemon_state=None,
+        noop_reason=None,
+        session_id=None,
+    )
+
+    assert telemetry_context_hit(trigger, session=codex, record=record, later_reads={"src/app.py"})
 
 
 def test_match_telemetry_redacted_project_uses_project_hash():

@@ -186,6 +186,29 @@ def project_hash(project: str | Path) -> str:
     return hashlib.sha256(str(project).encode("utf-8")).hexdigest()[:8]
 
 
+def path_key(project: str | Path, value: str) -> str:
+    project_path = Path(project).expanduser()
+    try:
+        project_path = project_path.resolve()
+    except Exception:
+        pass
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = project_path / path
+    try:
+        resolved = path.resolve()
+    except Exception:
+        resolved = path
+    try:
+        return str(resolved.relative_to(project_path)).replace("\\", "/")
+    except Exception:
+        return str(resolved).replace("\\", "/")
+
+
+def telemetry_path_hash(project: str | Path, value: str) -> str:
+    return hashlib.sha256(path_key(project, value).encode("utf-8")).hexdigest()[:12]
+
+
 def apply_token_count(tokens: TokenTotals, payload: dict[str, Any]) -> None:
     incoming = {field: int(payload.get(field) or 0) for field in TOKEN_FIELDS}
     if tokens.total_tokens and incoming["total_tokens"] >= tokens.total_tokens:
@@ -197,8 +220,12 @@ def apply_token_count(tokens: TokenTotals, payload: dict[str, Any]) -> None:
 
 
 def apply_cumulative_token_count(tokens: TokenTotals, payload: dict[str, Any]) -> None:
-    for field in TOKEN_FIELDS:
-        setattr(tokens, field, max(getattr(tokens, field), int(payload.get(field) or 0)))
+    for token_field in TOKEN_FIELDS:
+        setattr(
+            tokens,
+            token_field,
+            max(getattr(tokens, token_field), int(payload.get(token_field) or 0)),
+        )
 
 
 def extract_token_usage(payload: dict[str, Any]) -> dict[str, Any]:
@@ -487,6 +514,39 @@ def path_context_hit(trigger: str, later_reads: set[str]) -> bool:
     return False
 
 
+def redacted_path_context_hit(
+    trigger: str,
+    *,
+    session_project: str,
+    telemetry_project_hash: str,
+    later_reads: set[str],
+) -> bool:
+    prefix = f"<redacted>/{telemetry_project_hash}/"
+    if not telemetry_project_hash or not trigger.startswith(prefix):
+        return False
+    target_hash = trigger.removeprefix(prefix)
+    if not target_hash:
+        return False
+    return any(telemetry_path_hash(session_project, item) == target_hash for item in later_reads)
+
+
+def telemetry_context_hit(
+    trigger: str,
+    *,
+    session: SessionSummary,
+    record: TelemetryRecord,
+    later_reads: set[str],
+) -> bool:
+    if trigger.startswith("<redacted>/"):
+        return redacted_path_context_hit(
+            trigger,
+            session_project=normalize_cwd(session.cwd),
+            telemetry_project_hash=record.project_hash,
+            later_reads=later_reads,
+        )
+    return path_context_hit(trigger, later_reads)
+
+
 def session_matches_telemetry_project(session: SessionSummary, record: TelemetryRecord) -> bool:
     session_project = normalize_cwd(session.cwd)
     record_project = normalize_cwd(record.project)
@@ -574,11 +634,11 @@ def match_telemetry(
         later_reads = session.tools.unique_files_read | session.tools.unique_files_edited
         for path in record.trigger_files:
             hit_stats["trigger_total"] += 1
-            if path_context_hit(path, later_reads):
+            if telemetry_context_hit(path, session=session, record=record, later_reads=later_reads):
                 hit_stats["trigger_hits"] += 1
         for path in record.recommended_related_files:
             hit_stats["recommended_total"] += 1
-            if path_context_hit(path, later_reads):
+            if telemetry_context_hit(path, session=session, record=record, later_reads=later_reads):
                 hit_stats["recommended_hits"] += 1
     return matched, unmatched, hit_stats
 
