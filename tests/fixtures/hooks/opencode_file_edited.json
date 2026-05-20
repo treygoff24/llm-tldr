@@ -1,0 +1,9 @@
+{
+  "hook_event_name": "PostToolUse",
+  "tool_name": "file.edited",
+  "tool_input": {
+    "file_path": "app.py"
+  },
+  "session_id": "opencode-session-456",
+  "cwd": "/Users/treygoff/Code/llm-tldr"
+}

@@ -167,10 +167,10 @@ Examples:
         # Detect input type and route accordingly
         if is_github_url(args.input):
             tldr_file = process_github_url(args.input, args.github_temp_dir, args.output_filename, args.terse_output)
-            logging.info(f"✓ GitHub repository processed successfully!")
+            logging.info("✓ GitHub repository processed successfully!")
         else:
             tldr_file = process_local_path(args.input, args.output_filename, args.terse_output)
-            logging.info(f"✓ Local directory processed successfully!")
+            logging.info("✓ Local directory processed successfully!")
         
         logging.info(f"TLDR file created: {tldr_file}")
         

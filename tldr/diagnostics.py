@@ -31,6 +31,8 @@ from pathlib import Path
 from typing import Callable, TypedDict
 from xml.etree import ElementTree
 
+from tldr.command_exec import expand_shebang_command
+
 # Cap _resolve_tool's ancestor walk so deeply-nested paths don't trigger
 # a stat-storm for tools that aren't installed locally anywhere.
 _MAX_RESOLVE_DEPTH = 12
@@ -1022,7 +1024,7 @@ def _run_oxfmt(file_path: Path) -> list[dict]:
 
     try:
         result = subprocess.run(
-            [oxfmt, "--check", str(file_path)],
+            expand_shebang_command([oxfmt, "--check", str(file_path)]),
             capture_output=True,
             text=True,
             timeout=15,
@@ -1043,7 +1045,7 @@ def _run_project_oxfmt(project_path: Path) -> list[dict]:
 
     try:
         result = subprocess.run(
-            [oxfmt, "--check", ".", "!**/*.d.ts"],
+            expand_shebang_command([oxfmt, "--check", ".", "!**/*.d.ts"]),
             capture_output=True,
             text=True,
             timeout=60,
@@ -1219,7 +1221,7 @@ def _run_subprocess(
         kwargs: dict = {"capture_output": True, "text": True, "timeout": timeout}
         if cwd is not None:
             kwargs["cwd"] = str(cwd)
-        return subprocess.run(cmd, **kwargs)
+        return subprocess.run(expand_shebang_command(cmd), **kwargs)
     except subprocess.TimeoutExpired:
         return None
 

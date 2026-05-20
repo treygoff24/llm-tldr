@@ -33,7 +33,7 @@ def extract_apply_patch_paths(event: HookEvent) -> list[Path]:
     if event.tool_name != "apply_patch":
         return []
 
-    command = str(event.tool_input.get("command") or event.tool_input.get("cmd") or "")
+    command = str(event.tool_input.get("command") or event.tool_input.get("cmd") or event.tool_input.get("patch") or "")
     paths: list[Path] = []
     seen: set[Path] = set()
     patterns = (

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from tldr import __version__
+from tldr.command_exec import expand_shebang_command
 
 TLDR_MARKER = "tldr hooks run"
 LEGACY_MARKERS = ("tldr-read.mjs", "post-edit-diagnostics.mjs")
@@ -47,6 +48,10 @@ def default_config_path(client: str) -> Path:
         return Path("~/.claude/settings.json").expanduser()
     if client == "codex":
         return Path("~/.codex/hooks.json").expanduser()
+    if client in ("droid", "factory"):
+        return Path("~/.factory/settings.json").expanduser()
+    if client == "opencode":
+        return Path("~/.config/opencode/plugins/tldr-hooks.js").expanduser()
     raise ValueError(f"Unsupported client: {client}")
 
 
@@ -55,6 +60,13 @@ def load_json(path: str | Path) -> dict[str, Any]:
     if not config_path.exists():
         return {}
     return json.loads(config_path.read_text())
+
+
+def _existing_mode(path: Path) -> int | None:
+    try:
+        return path.stat().st_mode & 0o777
+    except OSError:
+        return None
 
 
 def backup_file(path: str | Path) -> Path:
@@ -118,7 +130,7 @@ def _validate_tldr_hooks_command(command: TldrCommand) -> None:
     validation_command = [*command, "hooks", "--help"]
     try:
         result = subprocess.run(
-            validation_command,
+            expand_shebang_command(validation_command),
             capture_output=True,
             text=True,
             timeout=5,
@@ -145,16 +157,24 @@ def _hook(command: str, timeout: int = 10, status_message: str | None = None) ->
     return hook
 
 
-def _desired_groups(client: str, tldr_command: TldrCommand) -> dict[str, list[dict[str, Any]]]:
-    codex = client == "codex"
+def _desired_groups(
+    client: str,
+    tldr_command: TldrCommand,
+    *,
+    enable_prompt_guard: bool = False,
+    enable_tool_guard: bool = False,
+    enable_compact_context: bool = False,
+) -> dict[str, list[dict[str, Any]]]:
+    is_codex = client == "codex"
+    is_droid = client in ("droid", "factory")
 
     def group(matcher: str, event: str, status: str) -> dict[str, Any]:
         command = _command(tldr_command, event, client)
-        hook = _hook(command, status_message=status if codex else None)
+        hook = _hook(command, status_message=status if is_codex else None)
         return {"matcher": matcher, "hooks": [hook]}
 
-    if codex:
-        return {
+    if is_codex:
+        groups: dict[str, list[dict[str, Any]]] = {
             "SessionStart": [group("startup|resume|clear", "session-start", "TLDR starting context")],
             "PreToolUse": [
                 group("apply_patch|Edit|Write", "pre-edit", "TLDR building edit context"),
@@ -163,7 +183,45 @@ def _desired_groups(client: str, tldr_command: TldrCommand) -> dict[str, list[di
                 group("apply_patch|Edit|Write", "post-edit", "TLDR checking edited file")
             ],
         }
+        if enable_prompt_guard:
+            groups["UserPromptSubmit"] = [group(".*", "user-prompt-submit", "TLDR prompt guard")]
+        if enable_tool_guard:
+            groups.setdefault("PreToolUse", []).append(
+                group("Bash", "pre-tool", "TLDR tool guard")
+            )
+            groups["PermissionRequest"] = [
+                group(
+                    "Bash|apply_patch|Edit|Write|mcp__.*",
+                    "permission-request",
+                    "TLDR permission guard",
+                )
+            ]
+        return groups
 
+    if is_droid:
+        groups = {
+            "SessionStart": [
+                group("startup|resume|clear|compact", "session-start", "")
+            ],
+            "PreToolUse": [
+                group("Read", "pre-read", ""),
+                group("Edit|Create|ApplyPatch", "pre-edit", ""),
+            ],
+            "PostToolUse": [
+                group("Edit|Create|ApplyPatch", "post-edit", "")
+            ],
+        }
+        if enable_prompt_guard:
+            groups["UserPromptSubmit"] = [group(".*", "user-prompt-submit", "")]
+        if enable_tool_guard:
+            groups.setdefault("PreToolUse", []).append(
+                group("Execute", "pre-tool", "")
+            )
+        if enable_compact_context:
+            groups["PreCompact"] = [group("manual|auto", "pre-compact", "")]
+        return groups
+
+    # Claude (default)
     return {
         "SessionStart": [group(".*", "session-start", "")],
         "PreToolUse": [
@@ -177,9 +235,24 @@ def _desired_groups(client: str, tldr_command: TldrCommand) -> dict[str, list[di
 def _is_tldr_owned(command: str) -> bool:
     return (
         TLDR_MARKER in command
-        or bool(re.search(r"\bhooks\s+run\s+(session-start|pre-read|pre-edit|post-edit)\b", command))
+        or bool(
+            re.search(
+                r"\bhooks\s+run\s+(session-start|pre-read|pre-edit|post-edit|user-prompt-submit|permission-request|pre-tool|post-tool|stop|session-end|notification|subagent-start|subagent-stop|pre-compact)\b",
+                command,
+            )
+        )
         or any(marker in command for marker in LEGACY_MARKERS)
     )
+
+
+def _managed_events(client: str) -> set[str]:
+    if client == "codex":
+        return {"SessionStart", "PreToolUse", "PostToolUse", "UserPromptSubmit", "PermissionRequest"}
+    if client in ("droid", "factory"):
+        return {"SessionStart", "PreToolUse", "PostToolUse", "UserPromptSubmit", "PreCompact"}
+    if client == "claude":
+        return {"SessionStart", "PreToolUse", "PostToolUse"}
+    return set()
 
 
 def _group_hooks(group: dict[str, Any]) -> list[dict[str, Any]]:
@@ -198,12 +271,14 @@ def merge_hook_group(
     existing: dict[str, Any],
     desired: dict[str, list[dict[str, Any]]],
     marker: str = TLDR_MARKER,
+    managed_events: set[str] | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     merged = dict(existing)
     hooks_root = dict(merged.get("hooks") or {})
     actions: list[str] = []
 
-    for event, desired_groups in desired.items():
+    for event in sorted(set(desired) | set(managed_events or ())):
+        desired_groups = desired.get(event, [])
         groups = []
         for group in hooks_root.get(event, []):
             group = dict(group)
@@ -246,7 +321,10 @@ def merge_hook_group(
             else:
                 groups.append(desired_group)
                 actions.append(f"add TLDR hook for {event} {matcher}")
-        hooks_root[event] = groups
+        if groups:
+            hooks_root[event] = groups
+        else:
+            hooks_root.pop(event, None)
 
     merged["hooks"] = hooks_root
     return merged, actions
@@ -257,6 +335,18 @@ def _resolved_config_path(client: str, config_path: str | None) -> Path:
     return path.resolve() if path.exists() else path
 
 
+def _is_managed_config_path(path: Path) -> bool:
+    path_str = str(path)
+    return (
+        path_str == "/etc"
+        or path_str.startswith("/etc/")
+        or path_str == "/Library/Application Support"
+        or path_str.startswith("/Library/Application Support/")
+        or path_str == "/Library/Managed Preferences"
+        or path_str.startswith("/Library/Managed Preferences/")
+    )
+
+
 def install_hooks(
     client: str,
     scope: str = "global",
@@ -264,25 +354,98 @@ def install_hooks(
     dry_run: bool = False,
     *,
     tldr_path: str | None = None,
+    enable_prompt_guard: bool = False,
+    enable_tool_guard: bool = False,
+    enable_compact_context: bool = False,
 ) -> InstallResult:
     if scope != "global":
         raise ValueError("Only global hook scope is currently supported")
 
+    # Cursor is experimental-only
+    if client == "cursor":
+        raise ValueError(
+            "Cursor hook install is experimental_unverified and disabled until "
+            "a local Cursor hook payload/output fixture proves the config shape."
+        )
+
+    # Reject managed/enterprise policy paths early (before reading)
     path = _resolved_config_path(client, config_path)
+    if _is_managed_config_path(path):
+        raise ValueError(f"Refusing to edit managed config path: {path}")
+
     tldr_command = _resolve_tldr_command(tldr_path)
+    if client == "opencode":
+        from tldr.hooks.opencode_adapter import generate_opencode_adapter
+        new_content = generate_opencode_adapter(
+            expand_shebang_command(tldr_command),
+            enable_tool_guard=enable_tool_guard,
+            enable_compact_context=enable_compact_context,
+        )
+        existing_content = ""
+        if path.exists():
+            try:
+                existing_content = path.read_text()
+            except Exception:
+                pass
+        changed = existing_content != new_content
+        actions = []
+        backup_path = None
+        if changed:
+            if existing_content:
+                if "tldr" not in existing_content.lower():
+                    actions.append("backup and replace existing plugin file containing non-TLDR content")
+                else:
+                    actions.append("replace existing TLDR-owned plugin file")
+            else:
+                actions.append("write generated OpenCode plugin adapter")
+            if not dry_run:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if path.exists():
+                    backup_path = backup_file(path)
+                tmp_path = path.with_name(f".{path.name}.tmp")
+                tmp_path.write_text(new_content)
+                existing_mode = _existing_mode(path)
+                if existing_mode is not None:
+                    tmp_path.chmod(existing_mode)
+                tmp_path.replace(path)
+        return InstallResult(
+            client=client,
+            config_path=path,
+            dry_run=dry_run,
+            changed=changed,
+            backup_path=backup_path,
+            actions=actions,
+            config={},
+        )
+
     existing = load_json(path)
-    desired = _desired_groups(client, tldr_command)
-    merged, actions = merge_hook_group(existing, desired)
+    desired = _desired_groups(
+        client,
+        tldr_command,
+        enable_prompt_guard=enable_prompt_guard,
+        enable_tool_guard=enable_tool_guard,
+        enable_compact_context=enable_compact_context,
+    )
+    merged, actions = merge_hook_group(existing, desired, managed_events=_managed_events(client))
     changed = merged != existing
     if not changed:
         actions = []
     backup_path = None
 
     if changed and not dry_run:
+        # Safety: reject managed JSON markers
+        if existing.get("enterprise_managed") or existing.get("managed") or "managedPolicy" in existing:
+            raise ValueError("Refusing to edit managed/enterprise policy config")
+
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.exists():
             backup_path = backup_file(path)
-        path.write_text(json.dumps(merged, indent=2) + "\n")
+        tmp_path = path.with_name(f".{path.name}.tmp")
+        tmp_path.write_text(json.dumps(merged, indent=2) + "\n")
+        existing_mode = _existing_mode(path)
+        if existing_mode is not None:
+            tmp_path.chmod(existing_mode)
+        tmp_path.replace(path)
 
     return InstallResult(
         client=client,
@@ -308,7 +471,7 @@ def doctor_report(
     clients: list[str] | None = None,
     project: str | Path = ".",
 ) -> dict[str, Any]:
-    clients = clients or ["claude", "codex"]
+    clients = clients or ["claude", "codex", "droid", "factory", "opencode"]
     try:
         tldr_command = _quote_command(*_resolve_tldr_command())
     except Exception:
@@ -323,6 +486,40 @@ def doctor_report(
     }
 
     for client in clients:
+        is_cursor = client == "cursor"
+        if is_cursor:
+            report["clients"][client] = {
+                "config_path": None,
+                "exists": False,
+                "tldr_hooks_present": False,
+                "error": None,
+                "status": "experimental_unverified",
+            }
+            continue
+
+        is_opencode = client == "opencode"
+        if is_opencode:
+            path = default_config_path(client)
+            exists = path.exists()
+            try:
+                if exists:
+                    content = path.read_text()
+                    hooks_present = "TLDR_COMMAND" in content or "tldr" in content.lower()
+                else:
+                    hooks_present = False
+                error = None
+            except Exception as exc:
+                hooks_present = False
+                error = str(exc)
+            report["clients"][client] = {
+                "config_path": str(path.resolve() if path.exists() else path),
+                "exists": exists,
+                "tldr_hooks_present": hooks_present,
+                "error": error,
+                "status": None,
+            }
+            continue
+
         path = default_config_path(client)
         try:
             config = load_json(path)
@@ -336,6 +533,7 @@ def doctor_report(
             "exists": path.exists(),
             "tldr_hooks_present": _hooks_present(config),
             "error": error,
+            "status": None,
         }
 
     try:

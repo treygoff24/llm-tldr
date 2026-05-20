@@ -1,0 +1,6 @@
+{
+  "event": "Stop",
+  "hook_event_name": "Stop",
+  "cwd": "/Users/treygoff/Code/llm-tldr",
+  "session_id": "codex-session-123"
+}

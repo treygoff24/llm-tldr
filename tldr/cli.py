@@ -449,19 +449,27 @@ Semantic Search:
     hooks_run_p = hooks_sub.add_parser("run", help="Run a TLDR hook from stdin JSON")
     hooks_run_p.add_argument(
         "event_name",
-        choices=["session-start", "pre-read", "pre-edit", "post-edit"],
+        choices=[
+            "session-start", "pre-read", "pre-edit", "post-edit",
+            "user-prompt-submit", "permission-request", "pre-tool",
+            "post-tool", "stop", "session-end", "notification",
+            "subagent-start", "subagent-stop", "pre-compact",
+        ],
         help="Hook event to run",
     )
-    hooks_run_p.add_argument("--client", default="generic", choices=["claude", "codex", "generic"])
+    hooks_run_p.add_argument("--client", default="generic", choices=["claude", "codex", "droid", "factory", "opencode", "generic"])
 
     hooks_install_p = hooks_sub.add_parser("install", help="Install TLDR hooks into an agent config")
-    hooks_install_p.add_argument("client", choices=["claude", "codex"])
+    hooks_install_p.add_argument("client", choices=["claude", "codex", "droid", "factory", "cursor", "opencode"])
     hooks_install_p.add_argument("--scope", default="global", choices=["global"])
     hooks_install_p.add_argument("--config", help="Override config path")
     hooks_install_p.add_argument("--dry-run", action="store_true")
+    hooks_install_p.add_argument("--enable-prompt-guard", action="store_true")
+    hooks_install_p.add_argument("--enable-tool-guard", action="store_true")
+    hooks_install_p.add_argument("--enable-compact-context", action="store_true")
 
     hooks_doctor_p = hooks_sub.add_parser("doctor", help="Check TLDR hook installation health")
-    hooks_doctor_p.add_argument("--client", action="append", choices=["claude", "codex"])
+    hooks_doctor_p.add_argument("--client", action="append", choices=["claude", "codex", "droid", "factory", "cursor", "opencode"])
     hooks_doctor_p.add_argument("--project", default=".")
     hooks_doctor_p.add_argument("--json", action="store_true")
 
@@ -487,11 +495,20 @@ Semantic Search:
         from .hook_installer import doctor_report, format_doctor_report, install_hooks
 
         if args.hooks_action == "install":
+            if args.client == "cursor":
+                raise ValueError(
+                    "Cursor hook install is experimental_unverified and disabled until "
+                    "a local Cursor hook payload/output fixture proves the config shape"
+                )
+
             result = install_hooks(
                 args.client,
                 scope=args.scope,
                 config_path=args.config,
                 dry_run=args.dry_run,
+                enable_prompt_guard=args.enable_prompt_guard,
+                enable_tool_guard=args.enable_tool_guard,
+                enable_compact_context=args.enable_compact_context,
             )
             print(result.to_text())
             return

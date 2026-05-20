@@ -1,0 +1,7 @@
+{
+  "event": "UserPromptSubmit",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "Help me write code.",
+  "sessionId": "droid-session-abc",
+  "project_dir": "/Users/treygoff/Code/llm-tldr"
+}

@@ -1,0 +1,9 @@
+{
+  "hook_event_name": "PermissionRequest",
+  "tool_name": "Execute",
+  "tool_input": {
+    "command": "rm -rf /"
+  },
+  "session_id": "opencode-session-456",
+  "cwd": "/Users/treygoff/Code/llm-tldr"
+}

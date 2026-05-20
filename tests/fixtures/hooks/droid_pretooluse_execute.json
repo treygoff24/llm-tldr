@@ -1,0 +1,10 @@
+{
+  "event": "PreToolUse",
+  "hook_event_name": "PreToolUse",
+  "toolName": "Execute",
+  "toolInput": {
+    "command": "rm -rf /"
+  },
+  "sessionId": "droid-session-abc",
+  "project_dir": "/Users/treygoff/Code/llm-tldr"
+}

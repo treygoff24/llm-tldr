@@ -1,0 +1,7 @@
+{
+  "event": "PreCompact",
+  "hook_event_name": "PreCompact",
+  "matcher": "manual",
+  "sessionId": "droid-session-abc",
+  "project_dir": "/Users/treygoff/Code/llm-tldr"
+}

@@ -6,7 +6,7 @@ import time
 from typing import Any
 
 from tldr.hooks.outcome import HookExecutionResult, error, injected_bytes
-from tldr.hooks.runtime import parse_hook_event, render_hook_response
+from tldr.hooks.runtime import JSON_CONTROL_CLIENTS, parse_hook_event, render_hook_response
 from tldr.telemetry import record_hook_execution
 
 
@@ -27,6 +27,46 @@ def _dispatch(event_name: str, event) -> HookExecutionResult:
         from tldr.hooks.post_edit import build_post_edit_response
 
         return build_post_edit_response(event)
+    if event_name == "user-prompt-submit":
+        from tldr.hooks.prompt import build_user_prompt_submit_response
+
+        return build_user_prompt_submit_response(event)
+    if event_name == "permission-request":
+        from tldr.hooks.permission import build_permission_request_response
+
+        return build_permission_request_response(event)
+    if event_name == "pre-tool":
+        from tldr.hooks.tool import build_pre_tool_response
+
+        return build_pre_tool_response(event)
+    if event_name == "post-tool":
+        from tldr.hooks.outcome import noop
+
+        return noop("post_tool_unhandled")
+    if event_name == "stop":
+        from tldr.hooks.outcome import noop
+
+        return noop("stop_noop")
+    if event_name == "session-end":
+        from tldr.hooks.outcome import noop
+
+        return noop("session_end_noop")
+    if event_name == "notification":
+        from tldr.hooks.outcome import noop
+
+        return noop("notification_noop")
+    if event_name == "subagent-start":
+        from tldr.hooks.outcome import noop
+
+        return noop("subagent_start_noop")
+    if event_name == "subagent-stop":
+        from tldr.hooks.outcome import noop
+
+        return noop("subagent_stop_noop")
+    if event_name == "pre-compact":
+        from tldr.hooks.compact import build_pre_compact_response
+
+        return build_pre_compact_response(event)
     from tldr.hooks.outcome import noop
 
     return noop("unknown_event")
@@ -66,13 +106,31 @@ def run_hook(event_name: str, payload: dict[str, Any] | None, client: str = "gen
         execution.response,
         client=client,
         event_name=event.event_name or event_name,
+        raw_payload=payload,
     )
 
 
 def run_hook_from_stdin(event_name: str, client: str = "generic") -> int:
+    """Run a hook from stdin JSON and return the process exit code.
+
+    JSON-control clients/events always return exit 0 with JSON decisions.
+    Exit-code fallback clients return exit 2 only for blocking decisions
+    where JSON control is not available.
+    """
     raw = sys.stdin.read().strip()
     payload = json.loads(raw) if raw else {}
     rendered = run_hook(event_name, payload, client=client)
     sys.stdout.write(json.dumps(rendered))
     sys.stdout.write("\n")
+
+    # JSON-control clients always exit 0; decisions are in the JSON payload
+    if client in JSON_CONTROL_CLIENTS:
+        return 0
+
+    # Fallback for generic clients: exit 2 if the response represents a blocking decision
+    if rendered.get("decision") == "block" or (
+        rendered.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
+    ):
+        return 2
+
     return 0

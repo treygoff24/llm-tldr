@@ -1,0 +1,9 @@
+{
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "app.py"
+  },
+  "session_id": "opencode-session-456",
+  "cwd": "/Users/treygoff/Code/llm-tldr"
+}

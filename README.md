@@ -23,6 +23,8 @@ tldr context main --project .
 tldr hooks doctor
 tldr hooks install claude --scope global --dry-run
 tldr hooks install codex --scope global --dry-run
+tldr hooks install droid --scope global --dry-run
+tldr hooks install opencode --scope global --dry-run
 ```
 
 Your codebase is 100K lines. Claude's context window is 200K tokens. Raw code won't fit—and even if it did, the LLM would drown in irrelevant details.
@@ -38,22 +40,29 @@ tldr context main --project .  # Get LLM-ready summary
 Semantic search is opt-in: run `tldr semantic index .` when you want embeddings.
 The session-start hook never downloads the semantic model.
 
-### Agent Context Integration
+### Agent Hook Integration
 
-TLDR can run as a package-owned hook runtime for Claude Code and Codex:
+TLDR can run as a package-owned hook runtime for Claude Code, Codex, Factory
+Droid, and OpenCode:
 
 ```bash
 tldr pack "fix login bug" --project . --budget 3000
 tldr hooks run pre-read --client claude
 tldr hooks install claude --scope global --dry-run
 tldr hooks install codex --scope global --dry-run
+tldr hooks install droid --scope global --dry-run
+tldr hooks install opencode --scope global --dry-run
 ```
 
 Claude hooks are the most automatic path because Claude hook JSON supports
 permission decisions, updated tool input, and additional context before reads.
-Codex CLI 0.130 hooks are supported for session start and `apply_patch`-backed
-edit context/diagnostics. Codex does not currently expose a Read hook, so MCP
-remains the explicit fallback for manual Codex context pulls.
+Codex hooks now cover session start, edit diagnostics, prompt-secret blocking,
+permission/tool guards, and no-op lifecycle hooks such as stop/session-end where
+the client requires silence. Droid/Factory share the Claude-style hook config
+shape for session, read/edit, prompt guard, tool guard, and compact-context
+events. OpenCode uses a generated dependency-free JS plugin adapter instead of
+JSON hook config. Cursor hook install remains disabled/experimental until a
+local hook runtime is proven; use Cursor rules/MCP context for now.
 
 ---
 

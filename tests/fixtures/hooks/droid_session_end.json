@@ -1,0 +1,6 @@
+{
+  "event": "SessionEnd",
+  "hook_event_name": "SessionEnd",
+  "sessionId": "droid-session-abc",
+  "project_dir": "/Users/treygoff/Code/llm-tldr"
+}

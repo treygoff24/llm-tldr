@@ -43,12 +43,19 @@ tldr pack "understand auth flow" --project . --budget 3000
 tldr hooks doctor
 tldr hooks install claude --scope global --dry-run
 tldr hooks install codex --scope global --dry-run
+tldr hooks install droid --scope global --dry-run
+tldr hooks install opencode --scope global --dry-run
 ```
 
-Hooks provide automatic context around supported client events. Claude Code can
-inject context before reads and edits. Codex CLI 0.130 can inject context around
-session start and `apply_patch`-backed edits; Codex does not currently expose a
-Read hook, so MCP remains the explicit manual fallback for Codex read context.
+Hooks provide automatic context and conservative safety checks around supported
+client events. Claude Code can inject context before reads and edits. Codex can
+inject context around session start and edits, block high-confidence prompt
+secret pastes, and deny high-confidence destructive commands through documented
+JSON decisions. Droid/Factory use the Claude-style hook config surface for
+session/read/edit/prompt/tool/compact events. OpenCode uses a generated JS
+plugin adapter, not JSON hook config. Cursor hook support remains disabled and
+experimental until a local hook runtime is proven; use Cursor rules/MCP context
+for now.
 
 MCP dynamic project configuration:
 
@@ -603,20 +610,39 @@ Compare to **30 seconds** per CLI spawn.
 
 ---
 
-## Integration with Claude Code
+## Integration with Agent Hooks
 
-> **Note:** This section is specific to [Claude Code](https://claude.ai/claude-code) users. TLDR originated as part of [Continuous Claude](https://github.com/parcadei/Continuous-Claude-v3), which provides these hooks out of the box. For standalone usage, see the CLI and MCP sections above.
+> **Note:** TLDR originated as part of [Continuous Claude](https://github.com/parcadei/Continuous-Claude-v3), which provides Claude hooks out of the box. Standalone TLDR now also targets Codex, Factory Droid, and OpenCode where their hook/plugin surfaces are documented and locally testable.
 
 TLDR integrates via package-owned Python hooks that query TLDR for low-overhead
-code understanding. Older TypeScript/Node hook prototypes can remain external,
-but installable TLDR hooks use `tldr hooks run ...`:
+code understanding. Installable TLDR hooks use `tldr hooks run ...`; OpenCode
+uses a generated adapter that shells out to the same runtime:
 
 | Hook | Triggers On | TLDR Operation |
 |------|-------------|----------------|
 | `session-start` | Session start | Ensure `.tldrignore`, request daemon start, warm small repos |
-| `pre-read` | Claude before Read | Inject a nav map for large code files |
-| `pre-edit` | Claude Edit/Write/MultiEdit; Codex apply_patch | Extract file structure for safer edits |
-| `post-edit` | Claude Edit/Write/MultiEdit; Codex apply_patch | **Shift-left validation** - catch type errors immediately |
+| `pre-read` | Claude/Droid before Read | Inject a nav map for large code files |
+| `pre-edit` | Claude/Droid edits; Codex `apply_patch`/Edit/Write; OpenCode edit callback | Extract file structure for safer edits |
+| `post-edit` | Claude/Droid/Codex/OpenCode edit callbacks | **Shift-left validation** - catch type errors immediately |
+| `user-prompt-submit` | Codex/Droid opt-in prompt hook | Block high-confidence pasted secrets with a redacted reason |
+| `permission-request` / `pre-tool` | Codex/Droid/OpenCode opt-in permission/tool hooks | Deny high-confidence destructive shell commands |
+| `pre-compact` | Droid/OpenCode opt-in compaction hooks | Add compact TLDR context where the client supports it |
+| `stop`, `session-end`, `notification`, `subagent-*` | Lifecycle hooks | No-op by default unless a future fixture proves safe behavior |
+
+Install examples:
+
+```bash
+tldr hooks install claude --scope global --dry-run
+tldr hooks install codex --scope global --dry-run --enable-prompt-guard --enable-tool-guard
+tldr hooks install droid --scope global --dry-run --enable-prompt-guard --enable-tool-guard --enable-compact-context
+tldr hooks install opencode --scope global --dry-run --enable-tool-guard --enable-compact-context
+```
+
+Cursor remains deliberately guarded. `tldr hooks doctor --client cursor` reports
+`experimental_unverified`, and `tldr hooks install cursor` refuses to write until
+a local fixture proves Cursor hook payload/output schema. Until then, TLDR
+documents Cursor rules/MCP fallback rather than writing to Cursor app/CLI configs
+by default.
 
 ### Hook Implementation Pattern
 

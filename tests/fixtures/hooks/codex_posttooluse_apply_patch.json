@@ -1,0 +1,13 @@
+{
+  "event": "PostToolUse",
+  "hook_event_name": "PostToolUse",
+  "toolName": "apply_patch",
+  "toolInput": {
+    "patch": "diff --git a/file.py b/file.py\n..."
+  },
+  "toolResponse": {
+    "status": "success"
+  },
+  "cwd": "/Users/treygoff/Code/llm-tldr",
+  "session_id": "codex-session-123"
+}

@@ -1,0 +1,10 @@
+{
+  "event": "PreToolUse",
+  "hook_event_name": "PreToolUse",
+  "toolName": "ApplyPatch",
+  "toolInput": {
+    "patch": "some diff"
+  },
+  "sessionId": "droid-session-abc",
+  "project_dir": "/Users/treygoff/Code/llm-tldr"
+}
