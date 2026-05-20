@@ -43,6 +43,13 @@ def test_targeted_read_noops(tmp_path):
     assert build_read_response(_event(tmp_path, "app.py", {"offset": 10})).is_noop()
 
 
+def test_malformed_limit_noops(tmp_path):
+    source = tmp_path / "app.py"
+    source.write_text("def main():\n    return 1\n" + "x = 1\n" * 400)
+
+    assert build_read_response(_event(tmp_path, "app.py", {"limit": "abc"})).is_noop()
+
+
 def test_markdown_config_file_noops(tmp_path):
     (tmp_path / "README.md").write_text("# hi\n" * 400)
 

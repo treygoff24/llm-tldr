@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from tldr.hooks.post_edit import build_post_edit_response
+from tldr.hooks.post_edit import build_post_edit_response, extract_edited_files
 from tldr.hooks.runtime import parse_hook_event
 
 
@@ -168,3 +168,117 @@ def test_codex_apply_patch_move_prefers_destination_file(tmp_path, monkeypatch):
 
     assert seen["path"] == "new.py"
     assert "bad" in response.additional_context
+
+
+def test_codex_apply_patch_checks_all_updated_files(tmp_path, monkeypatch):
+    (tmp_path / "a.py").write_text("def a():\n    return 1\n")
+    (tmp_path / "b.py").write_text("def b():\n    return 2\n")
+    seen = []
+
+    def fake(path, language=None):
+        name = Path(path).name
+        seen.append(name)
+        if name == "b.py":
+            return {
+                "diagnostics": [
+                    {"file": "b.py", "line": 1, "column": 1, "source": "pyright", "message": "b bad"}
+                ],
+                "error_count": 1,
+                "warning_count": 0,
+            }
+        return {"diagnostics": [], "error_count": 0, "warning_count": 0}
+
+    monkeypatch.setattr("tldr.hooks.post_edit.get_diagnostics", fake)
+    monkeypatch.setattr("tldr.hooks.post_edit.notify_daemon", lambda *a, **k: None)
+
+    response = build_post_edit_response(
+        _event(
+            tmp_path,
+            {
+                "toolName": "apply_patch",
+                "toolInput": {
+                    "command": (
+                        "*** Begin Patch\n"
+                        "*** Update File: a.py\n"
+                        "@@\n"
+                        " def a():\n"
+                        "*** Update File: b.py\n"
+                        "@@\n"
+                        " def b():\n"
+                        "*** End Patch"
+                    )
+                },
+            },
+        )
+    )
+
+    assert seen == ["a.py", "b.py"]
+    assert "b bad" in response.additional_context
+
+
+def test_codex_apply_patch_combines_diagnostics_from_multiple_files(tmp_path, monkeypatch):
+    (tmp_path / "a.py").write_text("def a():\n    return 1\n")
+    (tmp_path / "b.py").write_text("def b():\n    return 2\n")
+
+    def fake(path, language=None):
+        name = Path(path).name
+        return {
+            "diagnostics": [
+                {"file": name, "line": 1, "column": 1, "source": "pyright", "message": f"{name} bad"}
+            ],
+            "error_count": 1,
+            "warning_count": 0,
+        }
+
+    monkeypatch.setattr("tldr.hooks.post_edit.get_diagnostics", fake)
+    monkeypatch.setattr("tldr.hooks.post_edit.notify_daemon", lambda *a, **k: None)
+
+    response = build_post_edit_response(
+        _event(
+            tmp_path,
+            {
+                "toolName": "apply_patch",
+                "toolInput": {
+                    "command": (
+                        "*** Begin Patch\n"
+                        "*** Update File: a.py\n"
+                        "@@\n"
+                        " def a():\n"
+                        "*** Update File: b.py\n"
+                        "@@\n"
+                        " def b():\n"
+                        "*** End Patch"
+                    )
+                },
+            },
+        )
+    )
+
+    assert "a.py bad" in response.additional_context
+    assert "b.py bad" in response.additional_context
+    assert "\n\nTLDR diagnostics for b.py" in response.additional_context
+
+
+def test_codex_apply_patch_keeps_missing_paths_when_other_paths_exist(tmp_path):
+    (tmp_path / "a.py").write_text("def a():\n    return 1\n")
+
+    event = _event(
+        tmp_path,
+        {
+            "toolName": "apply_patch",
+            "toolInput": {
+                "command": (
+                    "*** Begin Patch\n"
+                    "*** Update File: a.py\n"
+                    "@@\n"
+                    " def a():\n"
+                    "*** Add File: b.py\n"
+                    "+def b():\n"
+                    "+    return 2\n"
+                    "*** End Patch"
+                )
+            },
+        },
+    )
+
+    assert [path.name for path in extract_edited_files(event)] == ["a.py", "b.py"]

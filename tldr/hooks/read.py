@@ -88,8 +88,13 @@ def should_bypass_read(file_path: Path, tool_input: dict[str, Any]) -> bool:
         return True
     if "offset" in tool_input:
         return True
-    if "limit" in tool_input and int(tool_input.get("limit") or 0) < 100:
-        return True
+    if "limit" in tool_input:
+        try:
+            limit = int(tool_input.get("limit") or 0)
+        except (TypeError, ValueError):
+            return True
+        if limit < 100:
+            return True
     try:
         if not file_path.exists() or file_path.stat().st_size < 1500:
             return True

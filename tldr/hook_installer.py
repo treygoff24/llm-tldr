@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,6 +14,7 @@ from tldr import __version__
 
 TLDR_MARKER = "tldr hooks run"
 LEGACY_MARKERS = ("tldr-read.mjs", "post-edit-diagnostics.mjs")
+TldrCommand = list[str]
 
 
 @dataclass
@@ -62,21 +65,77 @@ def backup_file(path: str | Path) -> Path:
     return backup
 
 
-def _quote_command(executable: str, *args: str) -> str:
+def _quote_command(*parts: str) -> str:
     import shlex
 
-    return " ".join([shlex.quote(executable), *(shlex.quote(arg) for arg in args)])
+    return " ".join(shlex.quote(part) for part in parts)
 
 
-def _resolve_tldr_path(tldr_path: str | None = None) -> str:
-    candidate = tldr_path or shutil.which("tldr")
-    if not candidate:
+def _resolve_tldr_command(tldr_path: str | None = None) -> TldrCommand:
+    candidates = _candidate_tldr_commands(tldr_path)
+    if not candidates:
         raise FileNotFoundError("Could not find tldr executable on PATH")
-    return str(Path(candidate).expanduser().resolve())
+
+    errors: list[str] = []
+    for command in candidates:
+        try:
+            _validate_tldr_hooks_command(command)
+            return command
+        except RuntimeError as exc:
+            errors.append(str(exc))
+
+    raise RuntimeError("; ".join(errors))
 
 
-def _command(tldr_path: str, event_name: str, client: str) -> str:
-    return _quote_command(tldr_path, "hooks", "run", event_name, "--client", client)
+def _candidate_tldr_commands(tldr_path: str | None = None) -> list[TldrCommand]:
+    if tldr_path:
+        return [[str(Path(tldr_path).expanduser().resolve())]]
+
+    path_tldr = shutil.which("tldr")
+    candidates = [
+        [str(Path(sys.executable).with_name("tldr"))],
+        [sys.executable, "-m", "tldr.cli"],
+        [str(Path(path_tldr).expanduser())] if path_tldr else None,
+    ]
+    resolved: list[TldrCommand] = []
+    seen: set[tuple[str, ...]] = set()
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        executable = Path(candidate[0]).expanduser()
+        if not executable.exists():
+            continue
+        command = [str(executable.resolve()), *candidate[1:]]
+        key = tuple(command)
+        if key not in seen:
+            resolved.append(command)
+            seen.add(key)
+    return resolved
+
+
+def _validate_tldr_hooks_command(command: TldrCommand) -> None:
+    """Fail before installing hook commands that the target tldr cannot run."""
+    validation_command = [*command, "hooks", "--help"]
+    try:
+        result = subprocess.run(
+            validation_command,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"Could not validate TLDR hooks command: {_quote_command(*command)}") from exc
+
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip().splitlines()
+        suffix = f": {detail[0]}" if detail else ""
+        raise RuntimeError(
+            f"TLDR command does not support 'tldr hooks': {_quote_command(*command)}{suffix}"
+        )
+
+
+def _command(tldr_command: TldrCommand, event_name: str, client: str) -> str:
+    return _quote_command(*tldr_command, "hooks", "run", event_name, "--client", client)
 
 
 def _hook(command: str, timeout: int = 10, status_message: str | None = None) -> dict[str, Any]:
@@ -86,11 +145,11 @@ def _hook(command: str, timeout: int = 10, status_message: str | None = None) ->
     return hook
 
 
-def _desired_groups(client: str, tldr_path: str) -> dict[str, list[dict[str, Any]]]:
+def _desired_groups(client: str, tldr_command: TldrCommand) -> dict[str, list[dict[str, Any]]]:
     codex = client == "codex"
 
     def group(matcher: str, event: str, status: str) -> dict[str, Any]:
-        command = _command(tldr_path, event, client)
+        command = _command(tldr_command, event, client)
         hook = _hook(command, status_message=status if codex else None)
         return {"matcher": matcher, "hooks": [hook]}
 
@@ -210,9 +269,9 @@ def install_hooks(
         raise ValueError("Only global hook scope is currently supported")
 
     path = _resolved_config_path(client, config_path)
-    executable = _resolve_tldr_path(tldr_path)
+    tldr_command = _resolve_tldr_command(tldr_path)
     existing = load_json(path)
-    desired = _desired_groups(client, executable)
+    desired = _desired_groups(client, tldr_command)
     merged, actions = merge_hook_group(existing, desired)
     changed = merged != existing
     if not changed:
@@ -250,9 +309,14 @@ def doctor_report(
     project: str | Path = ".",
 ) -> dict[str, Any]:
     clients = clients or ["claude", "codex"]
+    try:
+        tldr_command = _quote_command(*_resolve_tldr_command())
+    except Exception:
+        tldr_command = shutil.which("tldr")
+
     report: dict[str, Any] = {
         "version": __version__,
-        "tldr": shutil.which("tldr"),
+        "tldr": tldr_command,
         "tldr_mcp": shutil.which("tldr-mcp"),
         "clients": {},
         "semantic_index_present": (Path(project) / ".tldr" / "cache" / "semantic" / "index.faiss").exists(),

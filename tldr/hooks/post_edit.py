@@ -9,7 +9,7 @@ from tldr.hooks.read import CODE_EXTENSIONS, resolve_event_path
 from tldr.hooks.runtime import HookEvent, HookResponse
 
 
-def extract_edited_file(event: HookEvent) -> Path | None:
+def extract_edited_files(event: HookEvent) -> list[Path]:
     sources: list[dict[str, Any]] = [
         event.tool_input,
         event.tool_result,
@@ -19,21 +19,65 @@ def extract_edited_file(event: HookEvent) -> Path | None:
         if isinstance(value, dict):
             sources.append(value)
 
+    paths: list[Path] = []
+    seen: set[Path] = set()
+
+    def add(path: Path | None) -> None:
+        if path is None or path in seen:
+            return
+        paths.append(path)
+        seen.add(path)
+
     for source in sources:
         for key in ("file_path", "path", "filePath"):
             path = resolve_event_path(event, source.get(key))
-            if path is not None:
-                return path
+            add(path)
+    if paths:
+        return paths
+
     patch_paths = [
         path for path in extract_apply_patch_paths(event)
         if path.suffix.lower() in CODE_EXTENSIONS
     ]
     for path in patch_paths:
-        if path.exists():
-            return path
-    if patch_paths:
-        return patch_paths[0]
-    return None
+        add(path)
+    return paths
+
+
+def _diagnostic_message_for_file(event: HookEvent, file_path: Path) -> str | None:
+    if file_path.suffix.lower() not in CODE_EXTENSIONS:
+        return None
+
+    notify_daemon(event.cwd, file_path)
+    if not file_path.exists():
+        return None
+
+    language = _detect_language(str(file_path))
+    if language == "unknown":
+        return None
+
+    try:
+        result = get_diagnostics(str(file_path), language=language)
+    except Exception:
+        return None
+
+    return format_diagnostic_message(file_path, result)
+
+
+def build_post_edit_response(event: HookEvent) -> HookResponse:
+    if event.tool_name not in EDIT_TOOLS:
+        return HookResponse.noop()
+
+    messages = [
+        message
+        for file_path in extract_edited_files(event)
+        if (message := _diagnostic_message_for_file(event, file_path))
+    ]
+    if not messages:
+        return HookResponse.noop()
+
+    message = "\n\n".join(messages)
+    return HookResponse(message=message, additional_context=message, suppress_output=False)
 
 
 def notify_daemon(project: Path, file_path: Path) -> None:
@@ -71,30 +115,3 @@ def format_diagnostic_message(file_path: Path, result: dict[str, Any], limit: in
         source = diag.get("source") or diag.get("rule") or "diagnostic"
         lines.append(f"- {location} [{source}] {diag.get('message', '')}")
     return "\n".join(lines)
-
-
-def build_post_edit_response(event: HookEvent) -> HookResponse:
-    if event.tool_name not in EDIT_TOOLS:
-        return HookResponse.noop()
-
-    file_path = extract_edited_file(event)
-    if file_path is None or file_path.suffix.lower() not in CODE_EXTENSIONS:
-        return HookResponse.noop()
-
-    notify_daemon(event.cwd, file_path)
-    if not file_path.exists():
-        return HookResponse.noop()
-
-    language = _detect_language(str(file_path))
-    if language == "unknown":
-        return HookResponse.noop()
-
-    try:
-        result = get_diagnostics(str(file_path), language=language)
-    except Exception:
-        return HookResponse.noop()
-
-    message = format_diagnostic_message(file_path, result)
-    if not message:
-        return HookResponse.noop()
-    return HookResponse(message=message, additional_context=message, suppress_output=False)
