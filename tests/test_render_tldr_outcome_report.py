@@ -77,6 +77,34 @@ def test_render_report_includes_hook_duration_summary():
     assert "Hook duration p50/p95 (ms): 12.0/18.0" in markdown
 
 
+def test_render_report_includes_skip_noop_and_clean_check_summary():
+    from scripts.render_tldr_outcome_report import render_markdown  # noqa: E402
+
+    payload = {
+        "window": {"start": "2026-05-20T00:00:00+00:00", "end": "2026-05-21T00:00:00+00:00"},
+        "rollups": [
+            {
+                "session_id": "s1",
+                "client": "codex",
+                "project_hash": "abc12345",
+                "verdict": "proxy-only",
+                "tldr_hooks": 3,
+                "tldr_errors": 0,
+                "tldr_skip_reason_counts": {"markdown_unsupported": 2},
+                "tldr_noop_reason_counts": {"clean_no_diagnostics": 1},
+                "tldr_clean_checks": 1,
+            }
+        ],
+    }
+
+    markdown = render_markdown(payload)
+
+    assert "## Skip / clean-check reasons" in markdown
+    assert "'markdown_unsupported': 2" in markdown
+    assert "'clean_no_diagnostics': 1" in markdown
+    assert "Clean post-edit checks: 1" in markdown
+
+
 def test_render_html_escapes_table_and_verdict_values(tmp_path):
     from scripts.render_tldr_outcome_report import render_html, render_markdown  # noqa: E402
 

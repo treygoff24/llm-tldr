@@ -254,6 +254,7 @@ def test_match_telemetry_uses_visible_files_as_legacy_candidates():
         event="pre-read",
         project_hash="abc",
         status="ok",
+        noop_reason=None,
         session_id="s1",
         duration_ms=1,
         injected_bytes=100,

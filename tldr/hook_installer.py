@@ -213,10 +213,10 @@ def _desired_groups(
         }
         if enable_prompt_guard:
             groups["UserPromptSubmit"] = [group(".*", "user-prompt-submit", "TLDR prompt guard")]
+        groups.setdefault("PreToolUse", []).append(
+            group("Bash|Execute|Shell|shell|command|exec_command", "pre-tool", "TLDR shell context")
+        )
         if enable_tool_guard:
-            groups.setdefault("PreToolUse", []).append(
-                group("Bash", "pre-tool", "TLDR tool guard")
-            )
             groups["PermissionRequest"] = [
                 group(
                     "Bash|apply_patch|Edit|Write|mcp__.*",

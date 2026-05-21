@@ -4,7 +4,7 @@
 
 With `TLDR_TELEMETRY=1`, each hook execution appends one JSONL record (`schema_version: 2`) including:
 
-- Hook status, duration, injected bytes, and context kind
+- Hook status, duration, injected bytes, context kind, and `noop_reason`
 - Hashed trigger, recommended, and surfaced file paths
 - Candidate lifecycle metadata (`candidate_files` with reason, rank, score, surfaced flag)
 - Optional `session_id` and `hook_run_id` for offline joins
@@ -60,6 +60,18 @@ Backfilled sessions use the best evidence available in historical logs. For newe
 | `causal_confidence` | Counterfactual strength (`proxy-only`, `manual-annotation`, `ab-test`, `matched-baseline`) |
 
 Historical backfill defaults to `causal_confidence=proxy-only`.
+
+## Skip and clean-check reasons
+
+Backfill rollups aggregate low-cardinality hook abstention reasons:
+
+- `tldr_skip_reason_counts` — e.g. `markdown_unsupported`, `outside_project`, `secret_like`
+- `tldr_noop_reason_counts` — e.g. `clean_no_diagnostics`, `clean`, `bypass`
+- `tldr_clean_checks` — post-edit runs with `noop_reason=clean_no_diagnostics` (successful clean checks, not failures)
+
+Markdown (`.md`/`.mdx`) is intentionally unsupported for TLDR read/edit context hooks.
+Line-specific reads are intentionally conservative: tiny files and repeated
+targeted reads for the same file/session are skipped with explicit reason codes.
 
 ## Verdict values
 

@@ -33,10 +33,13 @@ def test_write_new_file_noops_without_crashing(tmp_path):
     assert build_pre_edit_response(_event(tmp_path, "Write", "new.py")).is_noop()
 
 
-def test_non_code_file_noops(tmp_path):
+def test_markdown_edit_is_unsupported(tmp_path):
     (tmp_path / "README.md").write_text("# hello\n")
 
-    assert build_pre_edit_response(_event(tmp_path, "Edit", "README.md")).is_noop()
+    result = build_pre_edit_response(_event(tmp_path, "Edit", "README.md"))
+
+    assert result.status == "skipped"
+    assert result.noop_reason == "markdown_unsupported"
 
 
 def test_output_stays_under_budget(tmp_path):

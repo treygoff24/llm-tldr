@@ -61,6 +61,21 @@ def test_session_rollup_insufficient_case():
     assert summary["verdict"] == "insufficient-data"
 
 
+def test_record_hook_tracks_skip_noop_reasons_and_clean_checks():
+    rollup = SessionRollup(session_id="s7", client="codex", project_hash="abc")
+    t0 = datetime(2026, 5, 20, 12, 0, tzinfo=timezone.utc)
+    rollup.record_hook(
+        TldrHookEvent(timestamp=t0, event="pre-read", status="skipped", noop_reason="markdown_unsupported")
+    )
+    rollup.record_hook(
+        TldrHookEvent(timestamp=t0, event="post-edit", status="noop", noop_reason="clean_no_diagnostics")
+    )
+    summary = rollup.to_dict()
+    assert summary["tldr_skip_reason_counts"] == {"markdown_unsupported": 1}
+    assert summary["tldr_noop_reason_counts"] == {"clean_no_diagnostics": 1}
+    assert summary["tldr_clean_checks"] == 1
+
+
 def test_causal_confidence_uses_allowed_values_only():
     rollup = SessionRollup(session_id="s4", client="codex", project_hash="abc", causal_confidence="proxy-only")
     assert rollup.to_dict()["causal_confidence"] == "proxy-only"

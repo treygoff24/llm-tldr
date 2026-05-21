@@ -58,7 +58,28 @@ def render_markdown(payload: dict[str, Any]) -> str:
         status_counts["errors"] += int(item.get("tldr_errors") or 0)
         status_counts["skips"] += int(item.get("tldr_skips") or 0)
     lines.append(f"- Hook totals: {dict(status_counts)}")
-    lines.extend(["", "## Recommendation lifecycle", ""])
+    skip_reasons: Counter[str] = Counter()
+    noop_reasons: Counter[str] = Counter()
+    clean_checks = 0
+    for item in rollups:
+        for reason, count in (item.get("tldr_skip_reason_counts") or {}).items():
+            skip_reasons[reason] += int(count)
+        for reason, count in (item.get("tldr_noop_reason_counts") or {}).items():
+            noop_reasons[reason] += int(count)
+        clean_checks += int(item.get("tldr_clean_checks") or 0)
+    lines.extend(
+        [
+            "",
+            "## Skip / clean-check reasons",
+            "",
+            f"- Skips by reason: {dict(skip_reasons)}",
+            f"- Noops by reason: {dict(noop_reasons)}",
+            f"- Clean post-edit checks: {clean_checks}",
+            "",
+            "## Recommendation lifecycle",
+            "",
+        ]
+    )
     lines.append(
         f"- Candidates total/surfaced/later-used (sums): "
         f"{sum(int(r.get('candidate_files_total') or 0) for r in rollups)}/"

@@ -31,6 +31,7 @@ class TldrHookEvent:
     timestamp: datetime
     event: str
     status: str
+    noop_reason: str | None = None
     trigger_files: list[str] = field(default_factory=list)
     recommended_files: list[str] = field(default_factory=list)
     surfaced_files: list[str] = field(default_factory=list)
@@ -81,6 +82,9 @@ class SessionRollup:
     tldr_errors: int = 0
     tldr_skips: int = 0
     tldr_noops: int = 0
+    tldr_skip_reason_counts: dict[str, int] = field(default_factory=dict)
+    tldr_noop_reason_counts: dict[str, int] = field(default_factory=dict)
+    tldr_clean_checks: int = 0
     injected_bytes_total: int = 0
     injected_bytes_samples: list[int] = field(default_factory=list)
     hook_duration_samples: list[int] = field(default_factory=list)
@@ -130,8 +134,18 @@ class SessionRollup:
             self.tldr_errors += 1
         elif event.status == "skipped":
             self.tldr_skips += 1
+            if event.noop_reason:
+                self.tldr_skip_reason_counts[event.noop_reason] = (
+                    self.tldr_skip_reason_counts.get(event.noop_reason, 0) + 1
+                )
         elif event.status == "noop":
             self.tldr_noops += 1
+            if event.noop_reason == "clean_no_diagnostics":
+                self.tldr_clean_checks += 1
+            if event.noop_reason:
+                self.tldr_noop_reason_counts[event.noop_reason] = (
+                    self.tldr_noop_reason_counts.get(event.noop_reason, 0) + 1
+                )
         self.injected_bytes_total += event.injected_bytes
         self.injected_bytes_samples.append(event.injected_bytes)
         self.hook_duration_samples.append(event.duration_ms)
@@ -240,6 +254,9 @@ class SessionRollup:
             "tldr_errors": self.tldr_errors,
             "tldr_skips": self.tldr_skips,
             "tldr_noops": self.tldr_noops,
+            "tldr_skip_reason_counts": dict(self.tldr_skip_reason_counts),
+            "tldr_noop_reason_counts": dict(self.tldr_noop_reason_counts),
+            "tldr_clean_checks": self.tldr_clean_checks,
             "injected_bytes_total": self.injected_bytes_total,
             "injected_bytes_p50": statistics.median(injected) if injected else 0,
             "injected_bytes_p95": (

@@ -57,12 +57,17 @@ tldr hooks install opencode --scope global --dry-run
 Claude hooks are the most automatic path because Claude hook JSON supports
 permission decisions, updated tool input, and additional context before reads.
 Codex hooks now cover session start, edit diagnostics, prompt-secret blocking,
-permission/tool guards, and no-op lifecycle hooks such as stop/session-end where
-the client requires silence. Droid/Factory share the Claude-style hook config
-shape for session, read/edit, prompt guard, tool guard, and compact-context
-events. OpenCode uses a generated dependency-free JS plugin adapter instead of
-JSON hook config. Cursor hook install remains disabled/experimental until a
-local hook runtime is proven; use Cursor rules/MCP context for now.
+optional permission guards, default non-blocking Bash/shell `pre-tool` file-intent
+context, and no-op lifecycle hooks such as stop/session-end where the client
+requires silence. TLDR hook context supports code, tests, HTML, SQL, YAML/JSON,
+shell/config files, and common shell command file references. Line-specific
+reads get only a small orientation once per file/session; repeated targeted
+reads stay quiet. Markdown/MDX, secrets, lockfiles, and generated dependency
+trees remain excluded. Droid/Factory share the Claude-style hook config shape
+for session, read/edit, prompt guard, tool guard, and compact-context events.
+OpenCode uses a generated dependency-free JS plugin adapter instead of JSON hook
+config. Cursor hook install remains disabled/experimental until a local hook
+runtime is proven; use Cursor rules/MCP context for now.
 
 ---
 

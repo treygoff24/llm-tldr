@@ -160,6 +160,7 @@ class ParsedTelemetry:
     event: str
     project_hash: str
     status: str
+    noop_reason: str | None
     session_id: str | None
     duration_ms: int
     injected_bytes: int
@@ -192,6 +193,7 @@ def parse_telemetry_records(path: Path, start: datetime, end: datetime) -> list[
                 event=str(payload.get("event") or ""),
                 project_hash=project_hash_value,
                 status=str(payload.get("status") or "unknown"),
+                noop_reason=payload.get("noop_reason"),
                 session_id=payload.get("session_id"),
                 duration_ms=safe_int(payload.get("duration_ms")),
                 injected_bytes=safe_int(payload.get("injected_bytes")),
@@ -537,6 +539,7 @@ def match_telemetry_to_sessions(
                 timestamp=record.timestamp,
                 event=record.event,
                 status=record.status,
+                noop_reason=record.noop_reason,
                 trigger_files=record.trigger_files,
                 recommended_files=record.recommended_files,
                 surfaced_files=record.surfaced_files,

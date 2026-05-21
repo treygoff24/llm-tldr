@@ -466,8 +466,20 @@ def test_codex_reinstall_without_optins_removes_owned_optin_hooks(tmp_path, fake
     assert result.changed
     assert "UserPromptSubmit" not in data["hooks"]
     assert "PermissionRequest" not in data["hooks"]
-    assert "hooks run pre-tool" not in serialized
+    assert "hooks run pre-tool" in serialized
     assert "hooks run pre-edit" in serialized
+
+
+def test_codex_default_install_adds_shell_context_without_permission_guard(tmp_path, fake_tldr):
+    config = tmp_path / "hooks.json"
+
+    install_hooks("codex", config_path=str(config), tldr_path=str(fake_tldr))
+    data = json.loads(config.read_text())
+    serialized = json.dumps(data)
+
+    assert "PermissionRequest" not in data["hooks"]
+    assert any("pre-tool" in json.dumps(g) for g in data["hooks"].get("PreToolUse", []))
+    assert "TLDR shell context" in serialized
 
 
 def test_droid_reinstall_without_optins_removes_owned_optin_hooks(tmp_path, fake_tldr):

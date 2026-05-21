@@ -27,7 +27,7 @@ def test_post_edit_skips_excluded_vendor_paths(tmp_path, monkeypatch):
     )
 
     assert response.status == "skipped"
-    assert response.noop_reason == "no_diagnostics"
+    assert response.noop_reason == "no_edit_targets"
 
 
 def test_clean_diagnostics_noop(tmp_path, monkeypatch):
@@ -39,7 +39,9 @@ def test_clean_diagnostics_noop(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("tldr.hooks.post_edit.notify_daemon", lambda *a, **k: None)
 
-    assert build_post_edit_response(_event(tmp_path, {"toolInput": {"file_path": "app.py"}})).is_noop()
+    response = build_post_edit_response(_event(tmp_path, {"toolInput": {"file_path": "app.py"}}))
+    assert response.status == "noop"
+    assert response.noop_reason == "clean_no_diagnostics"
 
 
 def test_diagnostics_count_reports_error_and_warning_totals(tmp_path, monkeypatch):
@@ -131,10 +133,31 @@ def test_notify_fallback_marks_dirty_when_daemon_unavailable(tmp_path, monkeypat
     assert (tmp_path / ".tldr" / "cache" / "dirty.json").exists()
 
 
-def test_unsupported_extension_noop(tmp_path):
+def test_markdown_post_edit_is_unsupported(tmp_path):
     (tmp_path / "README.md").write_text("# hello\n")
 
-    assert build_post_edit_response(_event(tmp_path, {"toolInput": {"file_path": "README.md"}})).is_noop()
+    response = build_post_edit_response(_event(tmp_path, {"toolInput": {"file_path": "README.md"}}))
+
+    assert response.status == "skipped"
+    assert response.noop_reason == "markdown_unsupported"
+
+
+def test_test_file_post_edit_is_eligible(tmp_path, monkeypatch):
+    source = tmp_path / "tests" / "test_app.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("def test_main():\n    assert True\n")
+    monkeypatch.setattr(
+        "tldr.hooks.post_edit.get_diagnostics",
+        lambda *a, **k: {"diagnostics": [], "error_count": 0, "warning_count": 0},
+    )
+    monkeypatch.setattr("tldr.hooks.post_edit.notify_daemon", lambda *a, **k: None)
+
+    response = build_post_edit_response(
+        _event(tmp_path, {"toolInput": {"file_path": "tests/test_app.py"}})
+    )
+
+    assert response.status == "noop"
+    assert response.noop_reason == "clean_no_diagnostics"
 
 
 def test_external_path_skips_without_crashing(tmp_path, monkeypatch):
@@ -160,7 +183,8 @@ def test_codex_tool_response_filepath_finds_file(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("tldr.hooks.post_edit.notify_daemon", lambda *a, **k: None)
 
-    assert build_post_edit_response(_event(tmp_path, {"tool_response": {"filePath": "app.py"}})).is_noop()
+    response = build_post_edit_response(_event(tmp_path, {"tool_response": {"filePath": "app.py"}}))
+    assert response.noop_reason == "clean_no_diagnostics"
 
 
 def test_codex_toolresponse_filepath_finds_file(tmp_path, monkeypatch):

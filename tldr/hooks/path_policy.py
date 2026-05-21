@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,21 @@ CODE_EXTENSIONS = {
     ".lua",
     ".luau",
 }
+MARKDOWN_EXTENSIONS = {".md", ".mdx"}
+STRUCTURED_EXTENSIONS = {".html", ".htm", ".sql", ".yaml", ".yml", ".json", ".sh"}
+CONFIG_FILENAMES = {".gitignore", ".prettierignore", ".dockerignore", "Dockerfile", "Makefile"}
+GENERATED_OR_LOCK_FILENAMES = {
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "bun.lock",
+    "composer.lock",
+    "Cargo.lock",
+}
+SECRET_CONFIG_FILENAMES = {".npmrc", ".pypirc"}
+SECRET_CONFIG_PATTERNS = ("service-account", "credentials", "credential")
+STRUCTURED_MAX_BYTES = 256 * 1024
+
 BYPASS_SUFFIXES = (
     ".test.py",
     "_test.py",
@@ -61,6 +77,13 @@ MAX_CANDIDATES = 8
 MAX_SURFACED = 3
 
 
+@dataclass(frozen=True)
+class ContextPathDecision:
+    allowed: bool
+    reason: str
+    file_kind: str
+
+
 def _is_within_project(project: Path, path: Path) -> bool:
     try:
         project_root = project.expanduser().resolve()
@@ -78,32 +101,89 @@ def _is_test_file(path: Path) -> bool:
     return name.startswith("test_") or any(name.endswith(suffix) for suffix in BYPASS_SUFFIXES)
 
 
-def _looks_secret(path: Path) -> bool:
+def looks_secret_path(path: Path) -> bool:
     lowered = [part.lower() for part in path.parts]
-    return any(part in SECRET_PARTS for part in lowered) or any(
-        "secret" in part or "credential" in part for part in lowered
-    )
+    if any(part in SECRET_PARTS for part in lowered):
+        return True
+    return any("secret" in part or "credential" in part for part in lowered)
+
+
+def _looks_secret(path: Path) -> bool:
+    return looks_secret_path(path)
+
+
+def _is_secret_config_filename(name: str) -> bool:
+    lowered = name.lower()
+    if lowered in SECRET_CONFIG_FILENAMES:
+        return True
+    if lowered in GENERATED_OR_LOCK_FILENAMES:
+        return True
+    return any(pattern in lowered for pattern in SECRET_CONFIG_PATTERNS)
+
+
+def _structured_file_size_ok(path: Path) -> bool:
+    try:
+        return path.stat().st_size <= STRUCTURED_MAX_BYTES
+    except OSError:
+        return False
+
+
+def classify_context_path(
+    project: Path, path: Path, *, include_tests: bool = True
+) -> ContextPathDecision:
+    if not _is_within_project(project, path):
+        return ContextPathDecision(False, "outside_project", "unknown")
+
+    suffix = path.suffix.lower()
+    name = path.name
+
+    if suffix in MARKDOWN_EXTENSIONS:
+        return ContextPathDecision(False, "markdown_unsupported", "markdown")
+
+    if set(path.parts) & BYPASS_PARTS:
+        return ContextPathDecision(False, "excluded_dir", "unknown")
+
+    if _looks_secret(path) or _is_secret_config_filename(name):
+        return ContextPathDecision(False, "secret_like", "secret")
+
+    try:
+        exists = path.exists()
+    except OSError:
+        exists = False
+
+    if name in GENERATED_OR_LOCK_FILENAMES:
+        return ContextPathDecision(False, "secret_like", "generated")
+
+    is_test = _is_test_file(path)
+    if is_test and not include_tests:
+        return ContextPathDecision(False, "excluded", "test")
+
+    if suffix in CODE_EXTENSIONS:
+        if not exists:
+            return ContextPathDecision(False, "missing_file", "code")
+        if is_test:
+            return ContextPathDecision(True, "ok_test", "test")
+        return ContextPathDecision(True, "ok_code", "code")
+
+    is_structured = suffix in STRUCTURED_EXTENSIONS
+    is_config = name in CONFIG_FILENAMES
+
+    if is_structured or is_config:
+        if not exists:
+            return ContextPathDecision(False, "missing_file", "structured")
+        if is_structured and not _structured_file_size_ok(path):
+            return ContextPathDecision(False, "excluded", "structured")
+        if is_config:
+            return ContextPathDecision(True, "ok_config", "config")
+        return ContextPathDecision(True, "ok_structured", "structured")
+
+    return ContextPathDecision(False, "unsupported_extension", "unknown")
 
 
 def should_exclude_context_path(
-    project: Path, path: Path, *, include_tests: bool = False
+    project: Path, path: Path, *, include_tests: bool = True
 ) -> bool:
-    if not _is_within_project(project, path):
-        return True
-    if path.suffix.lower() not in CODE_EXTENSIONS:
-        return True
-    if set(path.parts) & BYPASS_PARTS:
-        return True
-    if _looks_secret(path):
-        return True
-    if not include_tests and _is_test_file(path):
-        return True
-    try:
-        if not path.exists():
-            return True
-    except OSError:
-        return True
-    return False
+    return not classify_context_path(project, path, include_tests=include_tests).allowed
 
 
 def resolve_event_path(event: HookEvent, value: str | None) -> Path | None:
@@ -127,12 +207,16 @@ def _resolve_import_module(event: HookEvent, source: Path, module: str) -> Path 
                 base = base / part
         candidates = [base.with_suffix(".py"), base / "__init__.py"]
         for candidate in candidates:
-            if candidate.exists() and not should_exclude_context_path(event.cwd, candidate):
+            if candidate.exists() and not should_exclude_context_path(
+                event.cwd, candidate, include_tests=True
+            ):
                 return candidate
         return None
     stem = module.split(".")[-1]
     same_dir = source.parent / f"{stem}.py"
-    if same_dir.exists() and not should_exclude_context_path(event.cwd, same_dir):
+    if same_dir.exists() and not should_exclude_context_path(
+        event.cwd, same_dir, include_tests=True
+    ):
         return same_dir
     return None
 
@@ -210,15 +294,17 @@ def discover_related_candidates(
         rel = event_relative_path(event, path)
         if rel is None:
             continue
+        decision = classify_context_path(event.cwd, path, include_tests=True)
         excluded_reason = None
-        include_tests = False
-        if should_exclude_context_path(event.cwd, path, include_tests=include_tests):
-            if _is_test_file(path):
+        if not decision.allowed:
+            if decision.reason == "markdown_unsupported":
+                excluded_reason = "markdown_unsupported"
+            elif _is_test_file(path) and decision.reason == "excluded":
                 excluded_reason = "test_default_excluded"
-            elif not path.exists():
+            elif decision.reason == "missing_file":
                 excluded_reason = "missing_file"
             else:
-                excluded_reason = "excluded"
+                excluded_reason = decision.reason
         will_surface = False
         if excluded_reason is None and surfaced_count < MAX_SURFACED:
             will_surface = True
