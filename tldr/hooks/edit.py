@@ -10,6 +10,11 @@ from tldr.hooks.runtime import HookEvent, HookResponse
 
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "Update", "apply_patch"}
 
+# Clients for which pre-edit context is suppressed entirely.
+# Codex is handled by the apply_patch skip above; this set is for future
+# tuning if real-world data demands suppressing additional clients.
+CLIENTS_PRE_EDIT_CONTEXT_SUPPRESSED: frozenset[str] = frozenset()
+
 
 def extract_target_file(event: HookEvent) -> Path | None:
     for key in ("file_path", "path"):
@@ -51,18 +56,48 @@ def extract_apply_patch_paths(event: HookEvent) -> list[Path]:
     return paths
 
 
-def _likely_symbol(tool_input: dict) -> str | None:
-    text = " ".join(
-        str(tool_input.get(key) or "")
-        for key in ("old_string", "new_string", "content", "text")
-    )
-    match = re.search(r"\b(?:def|class|function)\s+([A-Za-z_][\w]*)", text)
+SYMBOL_PATTERN = re.compile(r"\b(?:def|class|function)\s+([A-Za-z_][\w]*)")
+
+
+def _first_symbol_in_post_edit_value(value: object) -> str | None:
+    if isinstance(value, dict):
+        for key in ("new_string", "content", "text", "edits"):
+            symbol = _first_symbol_in_post_edit_value(value.get(key))
+            if symbol:
+                return symbol
+        return None
+    if isinstance(value, list):
+        for item in value:
+            symbol = _first_symbol_in_post_edit_value(item)
+            if symbol:
+                return symbol
+        return None
+    match = SYMBOL_PATTERN.search(str(value or ""))
     return match.group(1) if match else None
+
+
+def _likely_symbol(tool_input: dict) -> str | None:
+    """Return a symbol visible in the pending edit's post-edit text.
+
+    Do not infer from old_string alone: for renames/deletions, naming the
+    pre-edit symbol can imply it will still exist after the edit.
+    """
+    for key in ("new_string", "content", "text", "edits"):
+        symbol = _first_symbol_in_post_edit_value(tool_input.get(key))
+        if symbol:
+            return symbol
+    return None
 
 
 def build_pre_edit_response(event: HookEvent, budget: int = 2000) -> HookExecutionResult:
     if event.tool_name not in EDIT_TOOLS:
         return skipped(reason="wrong_tool")
+    if event.tool_name == "apply_patch":
+        # Codex shows the diff inline; pre-edit context causes more confusion
+        # than orientation. Post-edit diagnostics still run.
+        return skipped(reason="apply_patch_pre_edit_suppressed")
+    if event.client in CLIENTS_PRE_EDIT_CONTEXT_SUPPRESSED:
+        return skipped(reason="client_pre_edit_suppressed")
 
     file_path = extract_target_file(event)
     trigger_path = event_relative_path(event, file_path)
@@ -77,7 +112,10 @@ def build_pre_edit_response(event: HookEvent, budget: int = 2000) -> HookExecuti
     context = result.context or ""
     symbol = _likely_symbol(event.tool_input)
     if symbol:
-        context += f"\n\nLikely target symbol: {symbol}"
+        context += (
+            f"\n\nYour pending edit introduces or modifies: {symbol} "
+            "(inferred from the post-edit text; the file structure above is a pre-edit snapshot)."
+        )
 
     return ok(
         HookResponse(message=context, additional_context=context, suppress_output=False),

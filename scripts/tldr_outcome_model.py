@@ -146,6 +146,13 @@ class SessionRollup:
                 self.tldr_noop_reason_counts[event.noop_reason] = (
                     self.tldr_noop_reason_counts.get(event.noop_reason, 0) + 1
                 )
+        elif event.status == "ok":
+            if event.noop_reason == "clean_no_diagnostics":
+                self.tldr_clean_checks += 1
+                # also surface in the per-reason rollup so reports remain consistent
+                self.tldr_noop_reason_counts[event.noop_reason] = (
+                    self.tldr_noop_reason_counts.get(event.noop_reason, 0) + 1
+                )
         self.injected_bytes_total += event.injected_bytes
         self.injected_bytes_samples.append(event.injected_bytes)
         self.hook_duration_samples.append(event.duration_ms)

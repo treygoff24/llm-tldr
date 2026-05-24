@@ -70,10 +70,14 @@ def test_record_hook_tracks_skip_noop_reasons_and_clean_checks():
     rollup.record_hook(
         TldrHookEvent(timestamp=t0, event="post-edit", status="noop", noop_reason="clean_no_diagnostics")
     )
+    # ok-status clean edit confirmation also counts toward clean_checks
+    rollup.record_hook(
+        TldrHookEvent(timestamp=t0, event="post-edit", status="ok", noop_reason="clean_no_diagnostics")
+    )
     summary = rollup.to_dict()
     assert summary["tldr_skip_reason_counts"] == {"markdown_unsupported": 1}
-    assert summary["tldr_noop_reason_counts"] == {"clean_no_diagnostics": 1}
-    assert summary["tldr_clean_checks"] == 1
+    assert summary["tldr_noop_reason_counts"] == {"clean_no_diagnostics": 2}
+    assert summary["tldr_clean_checks"] == 2
 
 
 def test_causal_confidence_uses_allowed_values_only():

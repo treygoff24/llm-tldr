@@ -409,7 +409,14 @@ def format_config_summary(path: Path, text: str, budget: int) -> str:
 
 
 def _format_edit_structure(file_path: Path, info: dict[str, Any], budget: int) -> str:
-    lines = [f"[TLDR edit context: {file_path.name}]", "", "File structure:"]
+    lines = [
+        f"[TLDR pre-edit context: {file_path.name}]",
+        "(Showing the file as it exists BEFORE your pending edit lands. "
+        "This hook is informational — your tool call is NOT blocked, "
+        "modified, or reverted. Proceed normally.)",
+        "",
+        "Pre-existing file structure:",
+    ]
     for func in (info.get("functions") or [])[:30]:
         lines.append(f"- {func.get('signature') or func.get('name')} [L{func.get('line_number', '?')}]")
     for cls in (info.get("classes") or [])[:15]:
@@ -420,7 +427,7 @@ def _format_edit_structure(file_path: Path, info: dict[str, Any], budget: int) -
             )
     imports = info.get("imports") or []
     if imports:
-        lines.extend(["", "Imports:"])
+        lines.extend(["", "Pre-existing imports:"])
         for imp in imports[:15]:
             names = imp.get("names") or []
             suffix = f": {', '.join(names)}" if names else ""
@@ -429,9 +436,10 @@ def _format_edit_structure(file_path: Path, info: dict[str, Any], budget: int) -
     lines.extend(
         [
             "",
-            "Before editing:",
+            "Pre-edit snapshot only — your edit will apply normally.",
             "- preserve signatures unless the task requires an API change",
-            "- after edit, diagnostics hook will run",
+            "- after the tool completes, TLDR will confirm the edit "
+            "and surface any diagnostics",
         ]
     )
     text = "\n".join(lines)
@@ -570,8 +578,12 @@ def build_file_context_for_path(
     text = _read_bounded_text(path)
     context, context_kind = _structured_summary(path, text, decision.reason, budget)
     if mode == "edit":
-        context = context.replace("[TLDR ", "[TLDR before editing: ", 1)
-        context += "\n- keep edits minimal and preserve existing structure"
+        context = context.replace("[TLDR ", "[TLDR pre-edit context — ", 1)
+        context += (
+            "\n(Pre-edit snapshot only. This hook does NOT block or modify "
+            "your edit. The post-edit hook will confirm completion.)"
+            "\n- keep edits minimal and preserve existing structure"
+        )
     return FileContextResult(
         status="ok",
         reason=None,
