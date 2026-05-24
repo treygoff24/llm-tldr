@@ -622,8 +622,8 @@ uses a generated adapter that shells out to the same runtime:
 |------|-------------|----------------|
 | `session-start` | Session start | Ensure `.tldrignore`, request daemon start, warm small repos |
 | `pre-read` | Claude/Droid before Read | Inject a nav map for large code files |
-| `pre-edit` | Claude/Droid edits; Codex `apply_patch`/Edit/Write; OpenCode edit callback | Extract file structure for safer edits |
-| `post-edit` | Claude/Droid/Codex/OpenCode edit callbacks | **Shift-left validation** - catch type errors immediately |
+| `pre-edit` | Claude/Droid edits; Codex `Edit`/`Write` (Codex `apply_patch` is suppressed — see below); OpenCode edit callback | Extract pre-edit file structure with explicit "BEFORE your edit" framing so models do not misread the snapshot as a block |
+| `post-edit` | Claude/Droid/Codex/OpenCode edit callbacks | **Shift-left validation** — catch type errors immediately; also emit a clean-edit confirmation so silent success does not look like a revert |
 | `user-prompt-submit` | Codex/Droid opt-in prompt hook | Block high-confidence pasted secrets with a redacted reason |
 | `permission-request` / `pre-tool` | Codex/Droid/OpenCode opt-in permission/tool hooks | Deny high-confidence destructive shell commands |
 | `pre-compact` | Droid/OpenCode opt-in compaction hooks | Add compact TLDR context where the client supports it |
@@ -633,10 +633,15 @@ Install examples:
 
 ```bash
 tldr hooks install claude --scope global --dry-run
+tldr hooks install claude-space --scope global --dry-run
 tldr hooks install codex --scope global --dry-run --enable-prompt-guard --enable-tool-guard
 tldr hooks install droid --scope global --dry-run --enable-prompt-guard --enable-tool-guard --enable-compact-context
 tldr hooks install opencode --scope global --dry-run --enable-tool-guard --enable-compact-context
 ```
+
+Claude profile targets `claude`, `claude-work`, `claude-personal`, and
+`claude-space` all install the same Python TLDR runtime with `--client claude`;
+the target name only selects the profile config root.
 
 Cursor remains deliberately guarded. `tldr hooks doctor --client cursor` reports
 `experimental_unverified`, and `tldr hooks install cursor` refuses to write until

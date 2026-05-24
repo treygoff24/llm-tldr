@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
 from tldr.diagnostics import _detect_language, get_diagnostics
 from tldr.hooks.edit import EDIT_TOOLS, extract_apply_patch_paths
-from tldr.hooks.read import CODE_EXTENSIONS, resolve_event_path
-from tldr.hooks.outcome import HookExecutionResult, event_relative_path, ok, skipped
+from tldr.hooks.path_policy import (
+    CODE_EXTENSIONS,
+    classify_context_path,
+    looks_secret_path,
+    resolve_event_path,
+)
+from tldr.hooks.outcome import HookExecutionResult, event_relative_path, noop, ok, skipped
 from tldr.hooks.runtime import HookEvent, HookResponse
 
 
@@ -26,6 +32,16 @@ def extract_edited_files(event: HookEvent) -> list[Path]:
     def add(path: Path | None) -> None:
         if path is None or path in seen:
             return
+        decision = classify_context_path(event.cwd, path, include_tests=True)
+        if decision.reason == "markdown_unsupported":
+            return
+        if not decision.allowed:
+            if decision.reason == "missing_file" and path.suffix.lower() in CODE_EXTENSIONS:
+                paths.append(path)
+                seen.add(path)
+            return
+        if not path.exists() and looks_secret_path(path):
+            return
         paths.append(path)
         seen.add(path)
 
@@ -36,17 +52,31 @@ def extract_edited_files(event: HookEvent) -> list[Path]:
     if paths:
         return paths
 
-    patch_paths = [
-        path for path in extract_apply_patch_paths(event)
-        if path.suffix.lower() in CODE_EXTENSIONS
-    ]
-    for path in patch_paths:
+    for path in extract_apply_patch_paths(event):
+        decision = classify_context_path(event.cwd, path, include_tests=True)
+        if decision.reason == "markdown_unsupported":
+            continue
+        if path.suffix.lower() not in CODE_EXTENSIONS and decision.file_kind not in {
+            "code",
+            "test",
+        }:
+            continue
+        if path.exists() and not decision.allowed:
+            continue
+        if not path.exists() and looks_secret_path(path):
+            continue
         add(path)
     return paths
 
 
 def _diagnostic_message_for_file(event: HookEvent, file_path: Path) -> tuple[str | None, int, int]:
-    if file_path.suffix.lower() not in CODE_EXTENSIONS:
+    decision = classify_context_path(event.cwd, file_path, include_tests=True)
+    if decision.reason == "markdown_unsupported":
+        return None, 0, 0
+    if file_path.suffix.lower() not in CODE_EXTENSIONS and decision.file_kind not in {
+        "code",
+        "test",
+    }:
         return None, 0, 0
 
     notify_daemon(event.cwd, file_path)
@@ -80,6 +110,21 @@ def build_post_edit_response(event: HookEvent) -> HookExecutionResult:
         for path in edited_files
         if (display_path := event_relative_path(event, path)) is not None
     ]
+    if not edited_files:
+        raw_path = resolve_event_path(
+            event,
+            event.tool_input.get("file_path") or event.tool_input.get("path"),
+        )
+        if raw_path is not None:
+            decision = classify_context_path(event.cwd, raw_path, include_tests=True)
+            if decision.reason == "markdown_unsupported":
+                rel = event_relative_path(event, raw_path)
+                return skipped(
+                    reason="markdown_unsupported",
+                    trigger_files=[rel] if rel else [],
+                )
+        return skipped(reason="no_edit_targets")
+
     messages: list[str] = []
     diagnostics_count = 0
     for file_path in edited_files:
@@ -89,7 +134,18 @@ def build_post_edit_response(event: HookEvent) -> HookExecutionResult:
         messages.append(message)
         diagnostics_count += error_count + warning_count
     if not messages:
-        return skipped(reason="no_diagnostics", trigger_files=trigger)
+        if os.environ.get("TLDR_POST_EDIT_CLEAN_CONFIRM") == "0":
+            return noop(reason="clean_no_diagnostics", trigger_files=trigger)
+        confirmation = _format_clean_edit_confirmation(edited_files)
+        return ok(
+            HookResponse(
+                message=confirmation,
+                additional_context=confirmation,
+                suppress_output=False,
+            ),
+            trigger_files=trigger,
+            noop_reason="clean_no_diagnostics",
+        )
 
     message = "\n\n".join(messages)
     return ok(
@@ -118,6 +174,15 @@ def notify_daemon(project: Path, file_path: Path) -> None:
         mark_dirty(project, edited)
     except Exception:
         pass
+
+
+def _format_clean_edit_confirmation(edited_files: list[Path]) -> str:
+    names = ", ".join(p.name for p in edited_files[:5])
+    suffix = f" (+{len(edited_files) - 5} more)" if len(edited_files) > 5 else ""
+    return (
+        f"[TLDR post-edit] Edit completed for {names}{suffix}. "
+        "Post-edit check ran; no diagnostics were surfaced."
+    )
 
 
 def format_diagnostic_message(file_path: Path, result: dict[str, Any], limit: int = 10) -> str | None:

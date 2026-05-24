@@ -225,10 +225,10 @@ def main() -> int:
                         },
                     )
                 )
-                assert codex_pre_edit["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
-                assert "additionalContext" in codex_pre_edit["hookSpecificOutput"]
-                assert "continue" not in codex_pre_edit
-                assert "suppressOutput" not in codex_pre_edit
+                # Codex apply_patch pre-edit is suppressed: Codex already shows
+                # the diff inline, so an extra nav map only adds confusion.
+                # Post-edit diagnostics still run; this just means {} from the hook.
+                assert codex_pre_edit == {}
                 summary["codex_apply_patch_pre_edit"] = "ok"
 
                 codex_prompt_block = json.loads(

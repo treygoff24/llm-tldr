@@ -57,12 +57,17 @@ tldr hooks install opencode --scope global --dry-run
 Claude hooks are the most automatic path because Claude hook JSON supports
 permission decisions, updated tool input, and additional context before reads.
 Codex hooks now cover session start, edit diagnostics, prompt-secret blocking,
-permission/tool guards, and no-op lifecycle hooks such as stop/session-end where
-the client requires silence. Droid/Factory share the Claude-style hook config
-shape for session, read/edit, prompt guard, tool guard, and compact-context
-events. OpenCode uses a generated dependency-free JS plugin adapter instead of
-JSON hook config. Cursor hook install remains disabled/experimental until a
-local hook runtime is proven; use Cursor rules/MCP context for now.
+optional permission guards, default non-blocking Bash/shell `pre-tool` file-intent
+context, and no-op lifecycle hooks such as stop/session-end where the client
+requires silence. TLDR hook context supports code, tests, HTML, SQL, YAML/JSON,
+shell/config files, and common shell command file references. Line-specific
+reads get only a small orientation once per file/session; repeated targeted
+reads stay quiet. Markdown/MDX, secrets, lockfiles, and generated dependency
+trees remain excluded. Droid/Factory share the Claude-style hook config shape
+for session, read/edit, prompt guard, tool guard, and compact-context events.
+OpenCode uses a generated dependency-free JS plugin adapter instead of JSON hook
+config. Cursor hook install remains disabled/experimental until a local hook
+runtime is proven; use Cursor rules/MCP context for now.
 
 ---
 
@@ -439,6 +444,26 @@ For monorepos, create `.claude/workspace.json` to scope indexing:
 | Tokens for function context | 21,000 | 175 | **99% savings** |
 | Tokens for codebase overview | 104,000 | 12,000 | **89% savings** |
 | Query latency (daemon) | 30s | 100ms | **300x faster** |
+
+---
+
+## Outcome telemetry and reports
+
+Enable privacy-safe hook telemetry with `TLDR_TELEMETRY=1`, then backfill sanitized session rollups and render daily outcome reports. See [docs/dev-notes/outcome-telemetry.md](./docs/dev-notes/outcome-telemetry.md) for schema details, confidence labels, and interpretation.
+
+```bash
+# Fixture-safe smoke (no real agent logs required)
+python3 scripts/backfill_tldr_outcomes.py \
+  --start 2026-05-20T00:00:00Z --end 2026-05-21T00:00:00Z \
+  --codex-root tests/fixtures/eval/backfill_codex_root \
+  --claude-root tests/fixtures/eval/backfill_claude_root \
+  --tldr-telemetry tests/fixtures/eval/backfill_tldr_telemetry.jsonl \
+  --json-out /tmp/tldr-backfill-fixture.json
+```
+
+Generated `reports/*.json`, `reports/*.md`, and `reports/*.html` are local artifacts and are gitignored by default.
+
+For local-only dogfooding where you want richer raw evidence, opt into `TLDR_TELEMETRY_MODE=local-rich` and run backfill with `--include-local-evidence`. This keeps default secret hygiene but includes readable paths and sanitized tool-call evidence in local reports.
 
 ---
 

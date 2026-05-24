@@ -46,10 +46,8 @@ def test_codex_pre_edit_apply_patch_cli_output_matches_current_schema(tmp_path):
     result = run_cli(["hooks", "run", "pre-edit", "--client", "codex"], payload)
     rendered = json.loads(result.stdout)
 
-    assert rendered["hookSpecificOutput"]["hookEventName"] == "PreToolUse"
-    assert "main" in rendered["hookSpecificOutput"]["additionalContext"]
-    assert "continue" not in rendered
-    assert "suppressOutput" not in rendered
+    assert rendered == {}
+    assert "hookSpecificOutput" not in rendered
 
 
 def test_hook_install_cli_can_target_temp_configs_without_user_config(tmp_path):
